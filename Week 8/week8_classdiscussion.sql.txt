@@ -1,0 +1,83 @@
+/*
+Databases Week 8 Tutorial Sample Solution
+week8_classdiscussion.sql
+
+Databases Units
+Author: FIT Database Teaching Team
+License: Copyright © Monash University, unless otherwise stated. All Rights Reserved.
+COPYRIGHT WARNING
+Warning
+This material is protected by copyright. For use within Monash University only. NOT FOR RESALE.
+Do not remove this notice. 
+*/
+
+/* 1. List all students and their details. Order the output by student id. */
+
+SELECT
+    *
+FROM
+    uni.student
+ORDER BY
+    stuid;
+    
+/* 2. List the student's details for those students who have a surname starting 
+with the letter "M". In the display, rename the columns stufname and stulname 
+to firstname and lastname. Order the output by student first name.*/
+
+SELECT
+    stuid,
+    stufname                       AS firstname,
+    stulname                       AS lastname,
+    to_char(studob, 'dd-Mon-yyyy') AS date_of_birth,
+    stuaddress,
+    stuphone,
+    stuemail
+FROM
+    uni.student
+WHERE
+    stulname LIKE 'M%'
+ORDER BY
+    firstname;
+    
+  
+/* 3. List the id and full name of all students who have marks in the range 
+of 80 to 100 in FIT9132 semester 2 of 2019. Order the output by full name. 
+If there are more than one student with the same name, order them based on their id.*/
+
+SELECT
+    s.stuid,
+    stulname
+    || ' '
+    || stufname AS fullname
+FROM
+         uni.student s
+    JOIN uni.enrolment e
+    ON s.stuid = e.stuid
+WHERE
+    enrolmark BETWEEN 80 AND 100
+    AND unitcode = 'FIT9132'
+    AND ofsemester = 2
+    AND to_char(ofyear, 'yyyy') = '2019'
+ORDER BY
+    fullname,
+    stuid;
+    
+    
+/* 4. List the unit code, unit name and the unit code 
+and unit name of the prerequisite units of all units in the database. 
+Order the output by unit code and prerequisite unit code. */
+
+SELECT
+    u1.unitcode,
+    u1.unitname,
+    prerequnitcode AS prereq_unitcode,
+    u2.unitname    AS prereq_unitname
+FROM
+         uni.unit u1
+    JOIN uni.prereq p
+    ON u1.unitcode = p.unitcode
+    JOIN uni.unit   u2
+    ON u2.unitcode = p.prerequnitcode
+ORDER BY
+    unitcode,
+    prereq_unitcode;
