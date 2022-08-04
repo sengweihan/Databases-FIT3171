@@ -1,0 +1,540 @@
+/*
+Databases Week 11 Tutorial Sample Solution
+week11_plsql_sol.sql
+
+Databases Units
+Author: FIT Database Teaching Team
+License: Copyright © Monash University, unless otherwise stated. All Rights Reserved.
+COPYRIGHT WARNING
+Warning
+This material is protected by copyright. For use within Monash University only. NOT FOR RESALE.
+Do not remove this notice.
+*/
+
+set pagesize 50;
+set serveroutput on;
+set echo on;
+
+-- Class Discussion
+create or replace trigger add_student_check
+before insert on student
+for each row
+begin
+    if(:new.stu_lname is null and :new.stu_fname is null) then
+        raise_application_error(-20000,'student must have at least one name');
+    end if;
+end;
+/
+
+-- Test Harness
+-- Prior state
+select * from student;
+
+-- Test trigger - insert student with no names - failed
+insert into STUDENT values (11111130,null,null,to_date('11-AUG-2007','DD-MON-YYYY'),null);
+
+-- Post state
+select * from student;
+
+-- Test trigger - insert student with only first name - success
+insert into STUDENT values (11111131,'Mouse',null,to_date('11-AUG-2007','DD-MON-YYYY'),null);
+
+
+-- Post state
+select * from student;
+
+-- Test trigger - insert student with only last name - success
+insert into STUDENT values (11111132,null,'Mickey',to_date('11-AUG-2007','DD-MON-YYYY'),null);
+
+
+-- Post state
+select * from student;
+
+ROLLBACK;
+
+
+-- Q1. Update cascade on unit_code in unit with msg re changes via dbms_output
+
+create or replace trigger unit_upd_cascade
+before update of unit_code on unit
+for each row
+begin
+  update ENROLMENT
+     set UNIT_CODE = :new.UNIT_CODE
+     where UNIT_CODE = :old.UNIT_CODE;
+
+  dbms_output.put_line ('Related unit codes in ENROLMENT have been updated');
+end;
+/
+
+-- Test Harness
+
+-- Prior state
+select * from unit;
+select * from enrolment;
+
+-- Test trigger
+
+update unit set unit_code = 'FIT9999' where unit_code = 'FIT5057';
+
+-- Post state
+select * from unit;
+select * from enrolment;
+
+-- Undo changes
+rollback;
+
+
+-- Q2. Unit Count Maintenance
+
+-- Maintain unit count when an enrolment is added or deleted. Delete also triggers an
+-- audit log insert. Note here we have chose not to show DBMS_OUTPUT
+
+create or replace trigger change_enrolment
+after insert or delete on enrolment
+for each row
+
+begin
+  if inserting then
+    update unit
+       set unit_no_student = unit_no_student + 1
+       where unit_code = :new.unit_code;
+  end if;
+
+  if deleting then
+    update unit
+       set unit_no_student = unit_no_student - 1
+       where unit_code = :old.unit_code;
+
+    insert into audit_log values (audit_seq.nextval, sysdate, user,
+                     :old.stu_nbr, :old.unit_code);
+
+  end if;
+
+end;
+/
+
+-- Test Harness
+set echo on
+-- Prior state
+-- Test student but could use one of the current rows
+insert into STUDENT
+      values (99999999,'Test','Test',to_date('01-JAN-90','DD-MON-YY'),null);
+select * from unit where unit_code='FIT9132';
+
+-- Test trigger
+insert into ENROLMENT values (99999999,'FIT9132',2021,'1',null,null);
+
+-- post state
+select * from unit where unit_code='FIT9132';
+-- Test trigger
+delete from ENROLMENT where stu_nbr= 99999999
+      and unit_code = 'FIT9132'and enrol_semester = '1' and enrol_year = 2021;
+
+-- post state
+select * from unit where unit_code='FIT9132';
+select * from audit_log;
+
+-- although not stricly required, closes transaction
+rollback;
+set echo off
+
+-- NOTE the value of the audit_no does not rollback, sequences once called via
+--      nextval must advance to the next available value, no rollback is possible
+
+-- Q3 Maintain student average
+-- A row-level trigger can’t read or write the table it’s fired from, a statement-level
+-- trigger can so one way of managing maintenance of the student average would be a
+-- statement level trigger although highly inefficient. Other approaches are possible
+-- but beyond our current level of study
+
+create or replace
+trigger maintain_student_average
+after update of enrol_mark on enrolment
+
+begin
+
+  update STUDENT
+    set STU_AVG_MARK =
+        (select AVG(ENROL_MARK) from ENROLMENT where stu_nbr = student.stu_nbr);
+
+end;
+/
+
+-- Test Harness
+set echo on
+-- Test trigger
+insert into STUDENT
+      values (99999999,'Test','Test',to_date('01-JAN-90','DD-MON-YY'),null);
+insert into ENROLMENT values (99999999,'FIT5057',2021,'1',null,null);
+insert into ENROLMENT values (99999999,'FIT9132',2021,'1',null,null);
+
+update ENROLMENT set enrol_mark = 60, enrol_grade = 'C'
+    where stu_nbr= 99999999 and unit_code = 'FIT5057'
+      and enrol_semester = '1' and enrol_year = 2021;
+
+update ENROLMENT set enrol_mark = 80, enrol_grade = 'HD'
+      where stu_nbr= 99999999 and unit_code = 'FIT9132'
+       and enrol_semester = '1' and enrol_year = 2021;
+
+-- Post state
+select * from student where stu_nbr= '99999999';
+
+rollback;
+set echo off
+
+
+-- Q4. Calculate_grade trigger
+
+create or replace
+trigger calculate_grade
+BEFORE INSERT OR UPDATE OF enrol_mark ON enrolment
+FOR EACH ROW
+declare
+	final_grade enrolment.enrol_grade%type;
+
+BEGIN
+  IF :new.enrol_mark >= 80 THEN
+	  final_grade := 'HD';
+  ELSIF
+    :new.enrol_mark >= 70 AND :new.enrol_mark < 80 THEN
+	  final_grade := 'D';
+  ELSIF
+    :new.enrol_mark >= 60 AND :new.enrol_mark < 70 THEN
+	  final_grade := 'C';
+  ELSIF
+    :new.enrol_mark >= 50 AND :new.enrol_mark < 60 THEN
+	  final_grade := 'P';
+  ELSIF
+    :new.enrol_mark < 50 THEN
+	  final_grade := 'N';
+  END IF;
+  -- Note here we are changing the :new value not directly writing to the table
+  -- via say an update which would cause a mutating table error
+  :new.enrol_grade := final_grade;
+
+end;
+/
+
+-- Test Harness
+set echo on
+
+insert into STUDENT
+      values (99999999,'Test','Test',to_date('01-JAN-90','DD-MON-YY'),null);
+insert into ENROLMENT values (99999999,'FIT9132',2021,'1',null,null);
+
+-- Test Trigger
+-- Test Update
+update ENROLMENT set enrol_mark = 80
+      where stu_nbr= 99999999 and unit_code = 'FIT9132'
+       and enrol_semester = '1' and enrol_year = 2021;
+select * from enrolment where stu_nbr= 99999999;
+
+update ENROLMENT set enrol_mark = 70
+      where stu_nbr= 99999999 and unit_code = 'FIT9132'
+       and enrol_semester = '1' and enrol_year = 2021;
+select * from enrolment where stu_nbr= 99999999;
+
+update ENROLMENT set enrol_mark = 60
+      where stu_nbr= 99999999 and unit_code = 'FIT9132'
+       and enrol_semester = '1' and enrol_year = 2021;
+select * from enrolment where stu_nbr= 99999999;
+
+update ENROLMENT set enrol_mark = 50
+      where stu_nbr= 99999999 and unit_code = 'FIT9132'
+       and enrol_semester = '1' and enrol_year = 2021;
+select * from enrolment where stu_nbr= 99999999;
+
+update ENROLMENT set enrol_mark = 40
+      where stu_nbr= 99999999 and unit_code = 'FIT9132'
+       and enrol_semester = '1' and enrol_year = 2021;
+select * from enrolment where stu_nbr= 99999999;
+rollback;
+
+-- Test Insert
+insert into STUDENT
+      values (99999999,'Test','Test',to_date('01-JAN-90','DD-MON-YY'),null);
+insert into ENROLMENT (stu_nbr, unit_code, enrol_year, enrol_semester, enrol_mark )
+    values (99999999,'FIT9132',2021,'1',67);
+select * from enrolment where stu_nbr= '99999999';
+rollback;
+
+--Q5 Insert new enrolment procedure
+
+CREATE OR REPLACE PROCEDURE prc_new_enrolment (
+    in_stu_nbr    IN NUMBER,
+    in_unit_code  IN CHAR,
+    in_enrol_year IN NUMBER,
+    in_enrol_sem  IN CHAR,
+    out_message   OUT VARCHAR2
+) AS
+    var_stu_nbr_found   NUMBER;
+    var_unit_code_found NUMBER;
+    var_enrolment_found NUMBER;
+BEGIN
+    SELECT
+        COUNT(*)
+    INTO var_stu_nbr_found
+    FROM
+        student
+    WHERE
+        stu_nbr = in_stu_nbr;
+
+    SELECT
+        COUNT(*)
+    INTO var_unit_code_found
+    FROM
+        unit
+    WHERE
+        unit_code = in_unit_code;
+
+    IF ( var_stu_nbr_found = 0 ) THEN
+        out_message := 'Invalid student number, new enrolment process cancelled';
+    ELSE
+            
+        IF ( var_unit_code_found = 0 ) THEN
+            out_message := 'Invalid unit code, new enrolment process cancelled';
+        ELSE
+            SELECT
+                COUNT(*)
+            INTO var_enrolment_found
+            FROM
+                enrolment
+            WHERE
+                unit_code = in_unit_code
+                and stu_nbr = in_stu_nbr
+                and enrol_year = in_enrol_year
+                and enrol_semester = in_enrol_sem;
+                
+            IF(var_enrolment_found <> 0 ) THEN
+                out_message := 'Enrolment exists in the system';
+            ELSE
+                INSERT INTO enrolment VALUES (
+                    in_stu_nbr,
+                    in_unit_code,
+                    in_enrol_year,
+                    in_enrol_sem,
+                    NULL,
+                    NULL
+                );
+                out_message := 'The new enrolment for student number '
+                           || in_stu_nbr
+                           || ' has been recorded';
+            END IF;
+        END IF;
+    END IF;
+
+END prc_new_enrolment;
+/
+
+--Test harness
+--Initial data
+insert into STUDENT
+      values (99999999,'Test','Test',to_date('01-JAN-90','DD-MON-YY'),null);
+--before value
+select * from student
+where stu_nbr = 99999999;
+select * from enrolment
+where stu_nbr = 99999999;
+
+--execute the procedure 
+DECLARE
+    output VARCHAR2(200);
+BEGIN
+    --call the procedure - invalid student number
+    prc_new_enrolment(19999999,'FIT9132',2022,'1',output);
+    dbms_output.put_line(output);
+END;
+/
+
+--execute the procedure 
+DECLARE
+    output VARCHAR2(200);
+BEGIN
+    --call the procedure - invalid unitcode
+    prc_new_enrolment(99999999,'FIT9999',2022,'1',output);
+    dbms_output.put_line(output);
+END;
+/
+
+--execute the procedure 
+DECLARE
+    output VARCHAR2(200);
+BEGIN
+    --call the procedure - success
+    prc_new_enrolment(99999999,'FIT9132',2022,'1',output);
+    dbms_output.put_line(output);
+END;
+/
+
+
+DECLARE
+    output VARCHAR2(200);
+BEGIN
+    --call the procedure - fail, duplicate
+    prc_new_enrolment(99999999,'FIT9132',2022,'1',output);
+    dbms_output.put_line(output);
+END;
+/
+--after value
+select * from student
+where stu_nbr = 99999999;
+select * from enrolment
+where stu_nbr = 99999999;
+
+rollback;
+
+--Q6 Update enrolment mark
+DROP TABLE update_log purge;
+CREATE TABLE update_log (
+    update_id        NUMBER(6) NOT NULL,
+    update_date      DATE NOT NULL,
+    update_user      VARCHAR2(30) NOT NULL,
+    stu_nbr   NUMBER(8) NOT NULL,
+    unit_code CHAR(7) NOT NULL,
+    enrol_year     NUMBER(4) NOT NULL,
+    enrol_semester CHAR(1) NOT NULL,
+    update_prev_mark NUMBER(3) NOT NULL,
+    update_new_mark NUMBER(3) NOT NULL
+);
+
+COMMENT ON COLUMN update_log.update_id IS
+    'Update audit id (unique for each audit)';
+
+COMMENT ON COLUMN update_log.update_date IS
+    'Update audit date';
+
+COMMENT ON COLUMN update_log.update_user IS
+    'Update audit oracle user';
+
+COMMENT ON COLUMN update_log.stu_nbr IS
+    'Updated Student number';
+
+COMMENT ON COLUMN update_log.unit_code IS
+    'Updated unit code';
+    
+COMMENT ON COLUMN update_log.enrol_year IS
+    'Updated enrol year';
+
+COMMENT ON COLUMN update_log.enrol_semester IS
+    'Updated enrol semester';
+
+COMMENT ON COLUMN update_log.update_prev_mark IS
+    'Update previous mark';
+
+COMMENT ON COLUMN update_log.update_new_mark IS
+    'Update new mark';
+
+
+ALTER TABLE update_log ADD CONSTRAINT update_log_pk PRIMARY KEY ( update_id );
+
+drop sequence update_seq;
+create sequence update_seq;
+
+CREATE OR REPLACE PROCEDURE prc_update_enrolment (
+    in_stu_nbr    IN NUMBER,
+    in_unit_code  IN CHAR,
+    in_enrol_year IN NUMBER,
+    in_enrol_sem  IN CHAR,
+    in_enrol_mark IN NUMBER,
+    out_message   OUT VARCHAR2
+) AS
+    var_enrolment_found    NUMBER;
+    var_current_enrol_mark NUMBER;
+BEGIN
+    SELECT
+        COUNT(*)
+    INTO var_enrolment_found
+    FROM
+        enrolment
+    WHERE
+            stu_nbr = in_stu_nbr
+        AND unit_code = in_unit_code
+        AND enrol_year = in_enrol_year
+        AND enrol_semester = in_enrol_sem;
+
+    IF ( var_enrolment_found <> 0 ) THEN
+    
+        SELECT
+            enrol_mark
+        INTO var_current_enrol_mark
+        FROM
+            enrolment
+        WHERE
+                stu_nbr = in_stu_nbr
+            AND unit_code = in_unit_code
+            AND enrol_year = in_enrol_year
+            AND enrol_semester = in_enrol_sem;
+            
+        UPDATE enrolment
+        SET
+            enrol_mark = in_enrol_mark
+        WHERE
+                stu_nbr = in_stu_nbr
+            AND unit_code = in_unit_code
+            AND enrol_year = in_enrol_year
+            AND enrol_semester = in_enrol_sem;
+
+        
+        INSERT INTO update_log VALUES (
+            update_seq.NEXTVAL,
+            sysdate,
+            user,
+            in_stu_nbr,
+            in_unit_code,
+            in_enrol_year,
+            in_enrol_sem,
+            var_current_enrol_mark,
+            in_enrol_mark
+        );
+
+        out_message := 'The new enrolment mark for student number '
+                       || in_stu_nbr
+                       || ' has been updated';
+    ELSE
+        out_message := 'The new enrolment mark cannot be recorded because the enrolment doesn''t exist';
+    END IF;
+
+END prc_update_enrolment;
+/
+
+--Test harness
+--Initial data
+insert into STUDENT
+      values (99999999,'Test','Test',to_date('01-JAN-90','DD-MON-YY'),null);
+insert into ENROLMENT (stu_nbr, unit_code, enrol_year, enrol_semester, enrol_mark )
+values (99999999,'FIT9132',2022,'1',67);
+insert into ENROLMENT (stu_nbr, unit_code, enrol_year, enrol_semester, enrol_mark )
+values (99999999,'FIT9135',2022,'1',45);
+
+--before value
+select * from enrolment where stu_nbr= '99999999';
+select * from update_log;
+
+
+--execute the procedure 
+DECLARE
+    output VARCHAR2(200);
+BEGIN
+    --call the procedure - invalid since the enrolment does not exist
+    prc_update_enrolment(99999999,'FIT9132',2021,'2',60, output);
+    dbms_output.put_line(output);
+END;
+/
+
+--execute the procedure 
+DECLARE
+    output VARCHAR2(200);
+BEGIN
+    --call the procedure - success
+    prc_update_enrolment(99999999,'FIT9135',2022,'1',50, output);
+    dbms_output.put_line(output);
+END;
+/
+
+
+--After value
+select * from enrolment where stu_nbr= '99999999';
+select * from update_log;
+
+rollback;

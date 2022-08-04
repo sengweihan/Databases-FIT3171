@@ -1,0 +1,140 @@
+/*
+Databases Week 10 Tutorial Sample Solution
+week10_inter_adv_class_discussion.sql
+
+Databases Units
+Author: FIT Database Teaching Team
+License: Copyright Monash University, unless otherwise stated. All Rights Reserved.
+COPYRIGHT WARNING
+Warning
+This material is protected by copyright. For use within Monash University only. NOT FOR RESALE.
+Do not remove this notice. 
+*/
+   
+/* 1. Find the total number of enrolment per semester for each unit in the year 2019. 
+The list should include the unitcode, semester and the total number of enrolment. 
+Order the list in increasing order of enrolment numbers. For units with the same 
+number of enrolments, display them by the unitcode order then by the semester order.*/
+
+SELECT
+    unitcode,
+    ofsemester,
+    COUNT(stuid)                AS total_enrolment
+FROM
+    uni.enrolment
+WHERE
+    to_char(ofyear, 'YYYY') = '2019'
+GROUP BY
+    unitcode,
+    ofsemester
+ORDER BY
+    total_enrolment, unitcode, ofsemester;
+    
+/* 2. Find the oldest student/s in FIT9132? 
+Display the student’s id, full name and the date of birth. 
+Sort the list by student id. */
+
+SELECT
+    s.stuid,
+    stufname
+    || ' '
+    || stulname AS fullname,
+    to_char(studob, 'dd/mm/yyyy') AS date_of_birth
+FROM
+         uni.student s
+    JOIN uni.enrolment e ON s.stuid = e.stuid
+WHERE
+        upper(e.unitcode) = 'FIT9132'
+    AND studob = (
+        SELECT
+            MIN(studob)
+        FROM
+                 uni.student s
+            JOIN uni.enrolment e ON s.stuid = e.stuid
+        WHERE
+            upper(e.unitcode) = 'FIT9132'
+    )
+ORDER BY
+    s.stuid;
+
+/* 3. Assuming that the student name is unique, display Claudette Serman's academic record, 
+include the unit code, unit name, year, semester, mark and explained_grade in the listing. 
+The Explained Grade column must show Fail for N, Pass for P, Credit for C, 
+Distinction for D and High Distinction for HD. 
+Order the list in increasing order of year, 
+within the same year order the list in increasing order of semester, 
+within the same semester order the list in increasing order of unit code order. */
+
+SELECT
+    unitcode,
+    unitname,
+    to_char(ofyear, 'yyyy') AS year,
+    ofsemester,
+    enrolmark,
+    CASE upper(enrolgrade)
+        WHEN 'N'   THEN
+            'Fail'
+        WHEN 'P'   THEN
+            'Pass'
+        WHEN 'C'   THEN
+            'Credit'
+        WHEN 'D'   THEN
+            'Distinction'
+        WHEN 'HD'  THEN
+            'High Distinction'
+    END AS explained_grade
+FROM
+         uni.enrolment
+    NATURAL JOIN uni.unit
+WHERE
+    stuid = (
+        SELECT
+            stuid
+        FROM
+            uni.student
+        WHERE
+                upper(stufname) = upper('Claudette')
+            AND upper (stulname) = upper('Serman')
+    )
+ORDER BY
+    year,
+    ofsemester,
+    unitcode;
+
+--ALTERNATIVE APPROACH
+SELECT
+    unitcode,
+    unitname,
+    EXTRACT(YEAR FROM ofyear)  AS year,
+    ofsemester,
+    enrolmark,
+    decode(upper(enrolgrade), 'N', 'Fail', 'P', 'Pass',
+           'C', 'Credit', 'D', 'Distinction', 'HD',
+           'High Distinction') AS explained_grade
+FROM
+         uni.enrolment
+    NATURAL JOIN uni.unit
+    NATURAL JOIN uni.student
+WHERE
+        upper(stufname) = upper('Claudette')
+    AND upper(stulname) = upper('Serman')
+ORDER BY
+    year,
+    ofsemester,
+    unitcode;
+
+    
+/* 4. Find the total number of prerequisite units for all units. 
+Include in the list the unit code of units that do not have a prerequisite. 
+Order the list in descending order of the number of prerequisite units.*/
+
+SELECT
+    u.unitcode,
+    COUNT(prerequnitcode) AS no_of_prereq
+FROM
+    uni.unit      u
+    LEFT OUTER JOIN uni.prereq    p ON u.unitcode = p.unitcode
+GROUP BY
+    u.unitcode
+ORDER BY
+    no_of_prereq DESC, unitcode;
